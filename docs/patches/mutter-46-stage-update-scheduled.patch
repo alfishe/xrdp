@@ -1,0 +1,226 @@
+Description: stage: Clear update_scheduled when the update is discarded
+ Backport of upstream mutter commit 24083e1e5851a13b9d307d538d84f42091a7b220
+ (mutter 48). A frame dispatched before the stage is mapped left
+ update_scheduled set, so once an input device event was queued no further
+ update was ever scheduled and the screen stayed black until a new window
+ was mapped. Hit with xorgxrdp sessions, where the X11 stage maps after its
+ virtual input devices appear. The test is adapted to mutter 46, which has
+ no show-stage plugin option.
+Origin: backport, https://gitlab.gnome.org/GNOME/mutter/-/commit/24083e1e5851a13b9d307d538d84f42091a7b220
+Bug: https://gitlab.gnome.org/GNOME/mutter/-/issues/3804
+---
+--- a/clutter/clutter/clutter-stage-private.h
++++ b/clutter/clutter/clutter-stage-private.h
+@@ -63,6 +63,9 @@ void                clutter_stage_emit_a
+ void                clutter_stage_after_update           (ClutterStage          *stage,
+                                                           ClutterStageView      *view,
+                                                           ClutterFrame          *frame);
++void                clutter_stage_frame_discarded        (ClutterStage          *stage,
++                                                          ClutterStageView      *view,
++                                                          ClutterFrame          *frame);
+ 
+ CLUTTER_EXPORT
+ void                _clutter_stage_set_window            (ClutterStage          *stage,
+--- a/clutter/clutter/clutter-stage-view.c
++++ b/clutter/clutter/clutter-stage-view.c
+@@ -877,11 +877,12 @@ handle_frame_clock_frame (ClutterFrameCl
+   if (CLUTTER_ACTOR_IN_DESTRUCTION (stage))
+     return CLUTTER_FRAME_RESULT_IDLE;
+ 
+-  if (!clutter_actor_is_realized (CLUTTER_ACTOR (stage)))
+-    return CLUTTER_FRAME_RESULT_IDLE;
+-
+-  if (!clutter_actor_is_mapped (CLUTTER_ACTOR (stage)))
+-    return CLUTTER_FRAME_RESULT_IDLE;
++  if (!clutter_actor_is_realized (CLUTTER_ACTOR (stage)) ||
++      !clutter_actor_is_mapped (CLUTTER_ACTOR (stage)))
++    {
++      clutter_stage_frame_discarded (stage, view, frame);
++      return CLUTTER_FRAME_RESULT_IDLE;
++    }
+ 
+   if (_clutter_context_get_show_fps ())
+     begin_frame_timing_measurement (view);
+--- a/clutter/clutter/clutter-stage.c
++++ b/clutter/clutter/clutter-stage.c
+@@ -531,6 +531,16 @@ clutter_stage_after_update (ClutterStage
+   priv->update_scheduled = FALSE;
+ }
+ 
++void
++clutter_stage_frame_discarded (ClutterStage     *stage,
++                               ClutterStageView *view,
++                               ClutterFrame     *frame)
++{
++  ClutterStagePrivate *priv = clutter_stage_get_instance_private (stage);
++
++  priv->update_scheduled = FALSE;
++}
++
+ static gboolean
+ clutter_stage_get_paint_volume (ClutterActor *self,
+                                 ClutterPaintVolume *volume)
+--- a/src/tests/meson.build
++++ b/src/tests/meson.build
+@@ -350,6 +350,11 @@ if have_native_tests
+   # Native backend tests
+   test_cases += [
+     {
++      'name': 'stage',
++      'suite': 'backends/native',
++      'sources': [ 'stage-tests.c', ],
++    },
++    {
+       'name': 'kms-utils',
+       'suite': 'backends/native',
+       'sources': [ 'kms-utils-unit-tests.c', ],
+--- /dev/null
++++ b/src/tests/stage-tests.c
+@@ -0,0 +1,147 @@
++/*
++ * Copyright (C) 2024 Red Hat Inc.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of the
++ * License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <http://www.gnu.org/licenses/>.
++ *
++ */
++
++/*
++ * Backport of the upstream stage scheduling test to mutter 46. Mutter 46
++ * has no "show-stage" plugin option, so the stage is hidden explicitly
++ * before the discarded dispatch.
++ */
++
++#include "config.h"
++
++#include "backends/meta-backend-private.h"
++#include "core/meta-context-private.h"
++#include "tests/meta-test-utils.h"
++#include "tests/meta-test/meta-context-test.h"
++
++#define PAINT_TIMEOUT_MS 5000
++
++static MetaContext *test_context;
++
++static gboolean
++event_filter_cb (const ClutterEvent *event,
++                 ClutterActor       *event_actor,
++                 gpointer            user_data)
++{
++  gboolean *saw_event = user_data;
++
++  if (clutter_event_type (event) == CLUTTER_DEVICE_ADDED)
++    *saw_event = TRUE;
++
++  return CLUTTER_EVENT_PROPAGATE;
++}
++
++static void
++on_after_paint (ClutterStage     *stage,
++                ClutterStageView *view,
++                ClutterFrame     *frame,
++                gboolean         *painted)
++{
++  *painted = TRUE;
++}
++
++static gboolean
++on_timeout (gpointer user_data)
++{
++  gboolean *timed_out = user_data;
++
++  *timed_out = TRUE;
++  return G_SOURCE_REMOVE;
++}
++
++static void
++iterate_for (unsigned int ms)
++{
++  gboolean done = FALSE;
++
++  g_timeout_add (ms, on_timeout, &done);
++  while (!done)
++    g_main_context_iteration (NULL, TRUE);
++}
++
++static void
++meta_test_stage_scheduling_delayed_show (void)
++{
++  MetaBackend *backend = meta_context_get_backend (test_context);
++  ClutterActor *stage = meta_backend_get_stage (backend);
++  ClutterSeat *seat = meta_backend_get_default_seat (backend);
++  g_autoptr (MetaVirtualMonitor) virtual_monitor = NULL;
++  g_autoptr (ClutterVirtualInputDevice) virtual_keyboard = NULL;
++  guint filter_id;
++  gulong paint_handler_id;
++  gboolean saw_event = FALSE;
++  gboolean painted = FALSE;
++  gboolean timed_out = FALSE;
++  guint timeout_id;
++
++  virtual_monitor = meta_create_test_monitor (test_context, 800, 600, 60.0f);
++  clutter_actor_hide (stage);
++  g_assert_false (clutter_actor_is_mapped (stage));
++
++  g_debug ("Scheduling an update that is dispatched while unmapped");
++  clutter_stage_schedule_update (CLUTTER_STAGE (stage));
++  iterate_for (100);
++
++  filter_id = clutter_event_add_filter (NULL, event_filter_cb, NULL,
++                                        &saw_event);
++  g_debug ("Creating virtual keyboard");
++  virtual_keyboard =
++    clutter_seat_create_virtual_device (seat, CLUTTER_KEYBOARD_DEVICE);
++  timeout_id = g_timeout_add (PAINT_TIMEOUT_MS, on_timeout, &timed_out);
++  while (!saw_event && !timed_out)
++    g_main_context_iteration (NULL, TRUE);
++  g_assert_true (saw_event);
++
++  g_debug ("Scheduling update with DEVICE_ADDED in stage queue");
++  clutter_stage_schedule_update (CLUTTER_STAGE (stage));
++
++  g_debug ("Showing stage");
++  paint_handler_id = g_signal_connect (stage, "after-paint",
++                                       G_CALLBACK (on_after_paint), &painted);
++  clutter_actor_show (stage);
++  clutter_actor_queue_redraw (stage);
++
++  g_debug ("Waiting for paint");
++  while (!painted && !timed_out)
++    g_main_context_iteration (NULL, TRUE);
++  g_assert_true (painted);
++
++  if (!timed_out)
++    g_source_remove (timeout_id);
++  g_signal_handler_disconnect (stage, paint_handler_id);
++  clutter_event_remove_filter (filter_id);
++}
++
++int
++main (int    argc,
++      char **argv)
++{
++  g_autoptr (MetaContext) context = NULL;
++
++  context = meta_create_test_context (META_CONTEXT_TEST_TYPE_HEADLESS,
++                                      META_CONTEXT_TEST_FLAG_NO_X11);
++  g_assert (meta_context_configure (context, &argc, &argv, NULL));
++
++  test_context = context;
++
++  g_test_add_func ("/stage/scheduling/delayed-show",
++                   meta_test_stage_scheduling_delayed_show);
++
++  return meta_context_test_run_tests (META_CONTEXT_TEST (context),
++                                      META_TEST_RUN_FLAG_NONE);
++}
