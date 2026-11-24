@@ -250,8 +250,12 @@ username=ask
 password=ask
 port=-1
 code=20
-; Frame capture interval (milliseconds)
-h264_frame_interval=16
+; Frame capture interval (milliseconds): the shortest gap between two
+; captured frames, i.e. a frame rate ceiling (16 = 60 Hz, 7 = ~142 Hz).
+; Capture never outruns the encoder: a new frame is only taken once the
+; previous ones are encoded (and acknowledged, if the client sends frame
+; acknowledgements), so a slower encoder simply yields a lower rate.
+h264_frame_interval=7
 rfx_frame_interval=32
 normal_frame_interval=40
 

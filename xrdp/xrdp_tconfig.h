@@ -53,6 +53,12 @@ struct xrdp_tconfig_gfx_openh264_param
     float MaxFrameRate;
 };
 
+struct xrdp_tconfig_gfx_nvenc_param
+{
+    char preset[8];       /* "p1" (fastest) .. "p7" (best quality) */
+    int Qp;               /* constant QP, 1 (best) .. 51 (worst), 0 = default */
+};
+
 enum xrdp_tconfig_codecs
 {
     XTC_H264,
@@ -62,7 +68,8 @@ enum xrdp_tconfig_codecs
 enum xrdp_tconfig_h264_encoders
 {
     XTC_H264_X264,
-    XTC_H264_OPENH264
+    XTC_H264_OPENH264,
+    XTC_H264_NVENC
 };
 
 struct xrdp_tconfig_gfx_codec_order
@@ -79,6 +86,8 @@ struct xrdp_tconfig_gfx
     struct xrdp_tconfig_gfx_x264_param x264_param[NUM_CONNECTION_TYPES];
     struct xrdp_tconfig_gfx_openh264_param
         openh264_param[NUM_CONNECTION_TYPES];
+    struct xrdp_tconfig_gfx_nvenc_param
+        nvenc_param[NUM_CONNECTION_TYPES];
 };
 
 static const char *const rdpbcgr_connection_type_names[] =

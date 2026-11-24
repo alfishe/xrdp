@@ -42,6 +42,10 @@
 #include "xrdp_encoder_openh264.h"
 #endif
 
+#ifdef XRDP_NVENC
+#include "xrdp_encoder_nvenc.h"
+#endif
+
 #define DEFAULT_XRDP_GFX_FRAMES_IN_FLIGHT 2
 /* limits used for validate env var XRDP_GFX_FRAMES_IN_FLIGHT */
 #define MIN_XRDP_GFX_FRAMES_IN_FLIGHT 1
@@ -98,7 +102,7 @@ process_enc_jpg(struct xrdp_encoder *self, XRDP_ENC_DATA *enc);
 static int
 process_enc_rfx(struct xrdp_encoder *self, XRDP_ENC_DATA *enc);
 #endif
-#if defined(XRDP_X264) || defined(XRDP_OPENH264)
+#if defined(XRDP_X264) || defined(XRDP_OPENH264) || defined(XRDP_NVENC)
 static int
 process_enc_h264(struct xrdp_encoder *self, XRDP_ENC_DATA *enc);
 #endif
@@ -140,38 +144,53 @@ static void
 set_h264_encoder_methods(struct xrdp_encoder *self)
 {
     const char *encoder_name = NULL;
-#if defined(XRDP_X264) && defined(XRDP_OPENH264)
     struct xrdp_tconfig_gfx gfxconfig;
+
     tconfig_load_gfx(GFX_CONF, &gfxconfig);
 
-    switch (gfxconfig.h264_encoder)
+#if defined(XRDP_NVENC)
+    if (gfxconfig.h264_encoder == XTC_H264_NVENC &&
+            xrdp_encoder_nvenc_install_ok())
     {
-        case XTC_H264_OPENH264:
-            encoder_name = "OpenH264";
-            self->xrdp_encoder_h264_create = xrdp_encoder_openh264_create;
-            self->xrdp_encoder_h264_delete = xrdp_encoder_openh264_delete;
-            self->xrdp_encoder_h264_encode = xrdp_encoder_openh264_encode;
-            break;
-        case XTC_H264_X264:
-        default:
-            /* x264 is the default H.264 software encoder */
-            encoder_name = "x264";
-            self->xrdp_encoder_h264_create = xrdp_encoder_x264_create;
-            self->xrdp_encoder_h264_delete = xrdp_encoder_x264_delete;
-            self->xrdp_encoder_h264_encode = xrdp_encoder_x264_encode;
-            break;
+        encoder_name = "NVENC (GPU)";
+        self->xrdp_encoder_h264_create = xrdp_encoder_nvenc_create;
+        self->xrdp_encoder_h264_delete = xrdp_encoder_nvenc_delete;
+        self->xrdp_encoder_h264_encode = xrdp_encoder_nvenc_encode;
     }
-#elif defined(XRDP_OPENH264)
-    encoder_name = "OpenH264";
-    self->xrdp_encoder_h264_create = xrdp_encoder_openh264_create;
-    self->xrdp_encoder_h264_delete = xrdp_encoder_openh264_delete;
-    self->xrdp_encoder_h264_encode = xrdp_encoder_openh264_encode;
-#elif defined(XRDP_X264)
-    encoder_name = "x264";
-    self->xrdp_encoder_h264_create = xrdp_encoder_x264_create;
-    self->xrdp_encoder_h264_delete = xrdp_encoder_x264_delete;
-    self->xrdp_encoder_h264_encode = xrdp_encoder_x264_encode;
 #endif
+
+    if (encoder_name == NULL)
+    {
+#if defined(XRDP_X264) && defined(XRDP_OPENH264)
+        switch (gfxconfig.h264_encoder)
+        {
+            case XTC_H264_OPENH264:
+                encoder_name = "OpenH264";
+                self->xrdp_encoder_h264_create = xrdp_encoder_openh264_create;
+                self->xrdp_encoder_h264_delete = xrdp_encoder_openh264_delete;
+                self->xrdp_encoder_h264_encode = xrdp_encoder_openh264_encode;
+                break;
+            case XTC_H264_X264:
+            default:
+                /* x264 is the default H.264 software encoder */
+                encoder_name = "x264";
+                self->xrdp_encoder_h264_create = xrdp_encoder_x264_create;
+                self->xrdp_encoder_h264_delete = xrdp_encoder_x264_delete;
+                self->xrdp_encoder_h264_encode = xrdp_encoder_x264_encode;
+                break;
+        }
+#elif defined(XRDP_OPENH264)
+        encoder_name = "OpenH264";
+        self->xrdp_encoder_h264_create = xrdp_encoder_openh264_create;
+        self->xrdp_encoder_h264_delete = xrdp_encoder_openh264_delete;
+        self->xrdp_encoder_h264_encode = xrdp_encoder_openh264_encode;
+#elif defined(XRDP_X264)
+        encoder_name = "x264";
+        self->xrdp_encoder_h264_create = xrdp_encoder_x264_create;
+        self->xrdp_encoder_h264_delete = xrdp_encoder_x264_delete;
+        self->xrdp_encoder_h264_encode = xrdp_encoder_x264_encode;
+#endif
+    }
 
     // Don't log the library we're going to use if we
     // couldn't load it.
@@ -225,7 +244,7 @@ xrdp_encoder_create(struct xrdp_mm *mm)
         client_info->capture_format = XRDP_a8b8g8r8;
         self->process_enc = process_enc_jpg;
     }
-#if defined(XRDP_X264) || defined(XRDP_OPENH264)
+#if defined(XRDP_X264) || defined(XRDP_OPENH264) || defined(XRDP_NVENC)
     else if (mm->libh264_loaded && (mm->egfx_flags & XRDP_EGFX_H264) != 0)
     {
         LOG(LOG_LEVEL_INFO,
@@ -410,7 +429,7 @@ xrdp_encoder_delete(struct xrdp_encoder *self)
     }
 #endif
 
-#if defined(XRDP_X264) || defined(XRDP_OPENH264)
+#if defined(XRDP_X264) || defined(XRDP_OPENH264) || defined(XRDP_NVENC)
     for (index = 0; index < 16; index++)
     {
         if (self->codec_handle_h264_gfx[index] != NULL)
@@ -685,7 +704,7 @@ process_enc_rfx(struct xrdp_encoder *self, XRDP_ENC_DATA *enc)
 }
 #endif
 
-#if defined(XRDP_X264) || defined(XRDP_OPENH264)
+#if defined(XRDP_X264) || defined(XRDP_OPENH264) || defined(XRDP_NVENC)
 
 /*****************************************************************************/
 static int
@@ -790,7 +809,7 @@ gfx_wiretosurface1(struct xrdp_encoder *self,
                    struct xrdp_egfx_bulk *bulk, struct stream *in_s,
                    XRDP_ENC_DATA *enc)
 {
-#if defined(XRDP_X264) || defined(XRDP_OPENH264)
+#if defined(XRDP_X264) || defined(XRDP_OPENH264) || defined(XRDP_NVENC)
     int index;
     int surface_id;
     int codec_id;

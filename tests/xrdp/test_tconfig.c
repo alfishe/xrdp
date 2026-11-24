@@ -50,6 +50,56 @@ START_TEST(test_tconfig_gfx_h264_invalid)
     ck_assert_int_eq(gfxconfig.h264_encoder, XTC_H264_X264);
 }
 
+START_TEST(test_tconfig_gfx_h264_nvenc)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+    int rv = tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_h264_encoder_nvenc.toml",
+                              &gfxconfig);
+
+    /* "NVENC" must be accepted as a valid encoder, not replaced by x264 */
+    ck_assert_int_eq(rv, 0);
+    ck_assert_int_eq(gfxconfig.h264_encoder, XTC_H264_NVENC);
+    ck_assert_int_eq(gfxconfig.codec.codecs[0], XTC_H264);
+}
+END_TEST
+
+START_TEST(test_tconfig_gfx_nvenc_load_basic)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_h264_encoder_nvenc.toml", &gfxconfig);
+
+    /* default */
+    ck_assert_str_eq(gfxconfig.nvenc_param[0].preset, "p4");
+    ck_assert_int_eq(gfxconfig.nvenc_param[0].Qp, 21);
+    /* lan inherits default */
+    ck_assert_str_eq(gfxconfig.nvenc_param[CONNECTION_TYPE_LAN].preset, "p4");
+    ck_assert_int_eq(gfxconfig.nvenc_param[CONNECTION_TYPE_LAN].Qp, 21);
+    /* wan overrides Qp only */
+    ck_assert_str_eq(gfxconfig.nvenc_param[CONNECTION_TYPE_WAN].preset, "p4");
+    ck_assert_int_eq(gfxconfig.nvenc_param[CONNECTION_TYPE_WAN].Qp, 28);
+    /* modem overrides both */
+    ck_assert_str_eq(gfxconfig.nvenc_param[CONNECTION_TYPE_MODEM].preset, "p1");
+    ck_assert_int_eq(gfxconfig.nvenc_param[CONNECTION_TYPE_MODEM].Qp, 38);
+    /* a type missing from the file inherits default */
+    ck_assert_int_eq(gfxconfig.nvenc_param[CONNECTION_TYPE_SATELLITE].Qp, 21);
+}
+END_TEST
+
+START_TEST(test_tconfig_gfx_nvenc_builtin_defaults)
+{
+    struct xrdp_tconfig_gfx gfxconfig;
+    tconfig_load_gfx(GFXCONF_STUBDIR "/gfx_h264_encoder_nvenc_defaults.toml",
+                     &gfxconfig);
+
+    /* No [NVENC] section: H.264 stays enabled with built-in defaults */
+    ck_assert_int_eq(gfxconfig.h264_encoder, XTC_H264_NVENC);
+    ck_assert_int_eq(gfxconfig.codec.codecs[0], XTC_H264);
+    ck_assert_str_eq(gfxconfig.nvenc_param[0].preset, "p2");
+    ck_assert_int_eq(gfxconfig.nvenc_param[0].Qp, 0);
+    ck_assert_str_eq(gfxconfig.nvenc_param[CONNECTION_TYPE_LAN].preset, "p2");
+}
+END_TEST
+
 START_TEST(test_tconfig_gfx_oh264_load_basic)
 {
     struct xrdp_tconfig_gfx gfxconfig;
@@ -169,6 +219,11 @@ make_suite_tconfig_load_gfx(void)
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_h264_x264);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_h264_undefined);
     tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_h264_invalid);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_h264_nvenc);
+
+    /* NVENC */
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_nvenc_load_basic);
+    tcase_add_test(tc_tconfig_load_gfx, test_tconfig_gfx_nvenc_builtin_defaults);
 
     suite_add_tcase(s, tc_tconfig_load_gfx);
 

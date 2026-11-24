@@ -188,6 +188,63 @@ tconfig_load_gfx_openh264_ct(toml_table_t *tfile, const int connection_type,
 }
 
 static int
+tconfig_load_gfx_nvenc_ct(toml_table_t *tfile, const int connection_type,
+                          struct xrdp_tconfig_gfx_nvenc_param *param)
+{
+    TCLOG(LOG_LEVEL_TRACE, "[NVENC]");
+
+    if (connection_type > NUM_CONNECTION_TYPES)
+    {
+        TCLOG(LOG_LEVEL_ERROR, "[NVENC] Invalid connection type is given");
+        return 1;
+    }
+
+    toml_table_t *nv = toml_table_in(tfile, "NVENC");
+    if (!nv)
+    {
+        TCLOG(LOG_LEVEL_WARNING, "[NVENC] NVENC params are not defined");
+        return 1;
+    }
+
+    toml_table_t *nv_ct =
+        toml_table_in(nv, rdpbcgr_connection_type_names[connection_type]);
+    toml_datum_t datum;
+
+    if (!nv_ct)
+    {
+        TCLOG(LOG_LEVEL_WARNING, "NVENC params for connection type [%s] is not defined",
+              rdpbcgr_connection_type_names[connection_type]);
+        return 1;
+    }
+
+    /* Preset */
+    datum = toml_string_in(nv_ct, "Preset");
+    if (datum.ok)
+    {
+        g_strncpy(param[connection_type].preset, datum.u.s,
+                  sizeof(param[connection_type].preset) - 1);
+        free(datum.u.s);
+    }
+    else if (connection_type == 0)
+    {
+        g_strcpy(param[connection_type].preset, "p2");
+    }
+
+    /* Qp */
+    datum = toml_int_in(nv_ct, "Qp");
+    if (datum.ok)
+    {
+        param[connection_type].Qp = datum.u.i;
+    }
+    else if (connection_type == 0)
+    {
+        param[connection_type].Qp = 0;
+    }
+
+    return 0;
+}
+
+static int
 tconfig_load_gfx_x264_ct(toml_table_t *tfile, const int connection_type,
                          struct xrdp_tconfig_gfx_x264_param *param)
 {
@@ -384,6 +441,12 @@ static int tconfig_load_gfx_h264_encoder(toml_table_t *tfile, struct xrdp_tconfi
                 valid_encoder_found = 1;
                 config->h264_encoder = XTC_H264_X264;
             }
+            if (g_strcasecmp(h264_encoder.u.s, "NVENC") == 0)
+            {
+                TCLOG(LOG_LEVEL_DEBUG, "[codec] h264_encoder = NVENC");
+                valid_encoder_found = 1;
+                config->h264_encoder = XTC_H264_NVENC;
+            }
             if (g_strcasecmp(h264_encoder.u.s, "OpenH264") == 0)
             {
                 TCLOG(LOG_LEVEL_DEBUG, "[codec] h264_encoder = OpenH264");
@@ -563,9 +626,11 @@ tconfig_load_gfx(const char *filename, struct xrdp_tconfig_gfx *config)
         /* First of all, read the default params */
         int x264_loaded;
         int oh264_loaded;
+        int nvenc_loaded;
 
         x264_loaded = tconfig_load_gfx_x264_ct(tfile, 0, config->x264_param);
         oh264_loaded = tconfig_load_gfx_openh264_ct(tfile, 0, config->openh264_param);
+        nvenc_loaded = tconfig_load_gfx_nvenc_ct(tfile, 0, config->nvenc_param);
 
         if (x264_loaded == 0)
         {
@@ -588,6 +653,27 @@ tconfig_load_gfx(const char *filename, struct xrdp_tconfig_gfx *config)
             {
                 config->openh264_param[ct] = config->openh264_param[0];
                 tconfig_load_gfx_openh264_ct(tfile, ct, config->openh264_param);
+            }
+        }
+
+        if (nvenc_loaded == 0)
+        {
+            for (int ct = CONNECTION_TYPE_MODEM; ct < NUM_CONNECTION_TYPES;
+                    ct++)
+            {
+                config->nvenc_param[ct] = config->nvenc_param[0];
+                tconfig_load_gfx_nvenc_ct(tfile, ct, config->nvenc_param);
+            }
+        }
+
+        if (nvenc_loaded != 0 && config->h264_encoder == XTC_H264_NVENC)
+        {
+            /* Defaults are built in, so NVENC works without [NVENC] */
+            g_strcpy(config->nvenc_param[0].preset, "p2");
+            for (int ct = CONNECTION_TYPE_MODEM; ct < NUM_CONNECTION_TYPES;
+                    ct++)
+            {
+                config->nvenc_param[ct] = config->nvenc_param[0];
             }
         }
 

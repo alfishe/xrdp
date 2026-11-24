@@ -40,6 +40,11 @@
 #include "xrdp_encoder_openh264.h"
 #endif
 
+#if defined(XRDP_NVENC)
+#include "xrdp_encoder_nvenc.h"
+#include "xrdp_tconfig.h"
+#endif
+
 /* Forward declarations */
 static int
 xrdp_mm_chansrv_connect(struct xrdp_mm *self, const char *port);
@@ -50,6 +55,23 @@ xrdp_mm_connect_sm(struct xrdp_mm *self);
 static void
 init_libh264_loaded(struct xrdp_mm *self)
 {
+#if defined(XRDP_NVENC)
+    {
+        struct xrdp_tconfig_gfx gfxconfig;
+
+        tconfig_load_gfx(GFX_CONF, &gfxconfig);
+        if (gfxconfig.h264_encoder == XTC_H264_NVENC)
+        {
+            if (xrdp_encoder_nvenc_install_ok())
+            {
+                self->libh264_loaded = 1;
+                return;
+            }
+            LOG(LOG_LEVEL_WARNING, "NVENC is selected but cannot be used. "
+                "Falling back to the software H.264 encoder, if any");
+        }
+    }
+#endif
 #if defined(XRDP_OPENH264)
     // Note that if this fails, and x264 is also configured, x264
     // will not be considered as a fallback.

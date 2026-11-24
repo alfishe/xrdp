@@ -1,10 +1,13 @@
 [codec]
 order = [ "H.264", "RFX" ]
 
-# Specify a preferred H.264 encoder, "x264" or "OpenH264".
-# This parameter takes effect only when more than one encoder is
-# enabled at compile time. If only one encoder is enabled, the encoder
-# will be used regardless the value of this parameter.
+# Specify a preferred H.264 encoder: "x264", "OpenH264" or "NVENC".
+# "NVENC" uses the GPU hardware encoder of NVIDIA cards and needs a
+# build with --enable-nvenc. If NVENC cannot be used at run time, xrdp
+# falls back to a software encoder that was enabled at compile time.
+# For x264 and OpenH264 this parameter takes effect only when both are
+# enabled at compile time. If only one is enabled, it is used regardless
+# of this parameter.
 h264_encoder = "x264"
 
 #
@@ -85,3 +88,27 @@ EnableFrameSkip = true
 TargetBitrate =   600_000
 MaxBitrate =    1_200_000
 
+#
+# Configurations for NVENC
+#
+# The NVENC encoder only codes the frames it is given, at a constant QP.
+# It knows nothing about frame rate or bandwidth: when frames are taken is
+# decided before the encoder (capture interval, client frame acks).
+#
+# Preset is "p1" (fastest) .. "p7" (best quality).
+# Qp is the constant quantizer, 1 (best) .. 51 (worst); 0 = default (23).
+#
+[NVENC.default]
+Preset = "p2"
+Qp = 23
+[NVENC.lan]
+[NVENC.wan]
+Qp = 28
+[NVENC.broadband_high]
+Qp = 30
+[NVENC.satellite]
+Qp = 32
+[NVENC.broadband_low]
+Qp = 34
+[NVENC.modem]
+Qp = 38
