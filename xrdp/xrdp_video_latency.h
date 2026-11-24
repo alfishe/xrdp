@@ -78,4 +78,33 @@ video_latency_frame_acked(struct video_latency *vl, int frame_id,
 int
 video_latency_ms(const struct video_latency *vl);
 
+/**
+ * Lowest latency among the last acknowledged frames
+ *
+ * Frames waiting in a client queue raise the median, the fastest frames
+ * still show what the path itself costs.
+ *
+ * @return ms, 0 if none yet
+ */
+int
+video_latency_min_ms(const struct video_latency *vl);
+
+/**
+ * Frames that must be in flight to keep capturing at the frame interval
+ *
+ * A frame is only captured once an earlier one is acknowledged, so with
+ * a fixed number of frames in flight the frame rate is that number divided
+ * by the round trip. Enough frames are allowed to cover the round trip at
+ * the wanted frame interval.
+ *
+ * @param latency_ms round trip of a frame, video_latency_min_ms()
+ * @param frame_interval_ms wanted time between captures
+ * @param min_frames configured frames in flight, used as the lower bound
+ * @param max_frames upper bound
+ * @return frames in flight to allow
+ */
+int
+video_latency_frames_in_flight(int latency_ms, int frame_interval_ms,
+                               int min_frames, int max_frames);
+
 #endif

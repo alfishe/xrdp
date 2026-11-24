@@ -50,6 +50,8 @@ struct xrdp_encoder
     int frame_id_server; /* last frame id received from Xorg */
     int frame_id_server_sent;
     int frames_in_flight;
+    int frames_in_flight_fixed; /* set by XRDP_GFX_FRAMES_IN_FLIGHT */
+    int frames_in_flight_now; /* last value sized from the latency */
     int gfx;
     int gfx_ack_off;
     struct video_latency video_latency;

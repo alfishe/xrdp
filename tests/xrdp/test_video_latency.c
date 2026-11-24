@@ -118,6 +118,41 @@ START_TEST(test_follows_change)
 }
 END_TEST
 
+START_TEST(test_min_latency)
+{
+    struct video_latency vl;
+    int id;
+
+    video_latency_reset(&vl);
+    ck_assert_int_eq(video_latency_min_ms(&vl), 0);
+    /* a client queue makes most frames slow, the fastest show the path */
+    for (id = 0; id < VIDEO_LATENCY_WINDOW; id++)
+    {
+        video_latency_frame_sent(&vl, id, 0);
+        video_latency_frame_acked(&vl, id, (id % 4 == 0) ? 90 : 200);
+    }
+    ck_assert_int_eq(video_latency_min_ms(&vl), 90);
+    ck_assert_int_eq(video_latency_ms(&vl), 200);
+}
+END_TEST
+
+START_TEST(test_frames_in_flight_cover_round_trip)
+{
+    /* measured on a live session: 90 ms round trip, 7 ms frame interval;
+     * with the default 2 frames in flight that is 22 fps at best */
+    ck_assert_int_eq(video_latency_frames_in_flight(90, 7, 2, 16), 14);
+    /* frames per round trip * interval covers the round trip */
+    ck_assert_int_ge(video_latency_frames_in_flight(90, 7, 2, 16) * 7, 90);
+    ck_assert_int_eq(video_latency_frames_in_flight(14, 7, 2, 16), 3);
+    /* nothing measured: configured value */
+    ck_assert_int_eq(video_latency_frames_in_flight(0, 7, 2, 16), 2);
+    ck_assert_int_eq(video_latency_frames_in_flight(90, 0, 2, 16), 2);
+    /* bounds */
+    ck_assert_int_eq(video_latency_frames_in_flight(5, 16, 4, 16), 4);
+    ck_assert_int_eq(video_latency_frames_in_flight(1000, 7, 2, 16), 16);
+}
+END_TEST
+
 Suite *
 make_suite_video_latency(void)
 {
@@ -130,6 +165,8 @@ make_suite_video_latency(void)
     tcase_add_test(tc, test_ack_once_and_catch_all_ignored);
     tcase_add_test(tc, test_median_ignores_stalls);
     tcase_add_test(tc, test_follows_change);
+    tcase_add_test(tc, test_min_latency);
+    tcase_add_test(tc, test_frames_in_flight_cover_round_trip);
     suite_add_tcase(s, tc);
     return s;
 }

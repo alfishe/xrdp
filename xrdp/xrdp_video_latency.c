@@ -109,3 +109,48 @@ video_latency_ms(const struct video_latency *vl)
     qsort(sorted, vl->count, sizeof(int), cmp_int);
     return sorted[vl->count / 2];
 }
+
+/*****************************************************************************/
+int
+video_latency_min_ms(const struct video_latency *vl)
+{
+    int index;
+    int min;
+
+    if (vl->count == 0)
+    {
+        return 0;
+    }
+    min = vl->window[0];
+    for (index = 1; index < vl->count; index++)
+    {
+        if (vl->window[index] < min)
+        {
+            min = vl->window[index];
+        }
+    }
+    return min;
+}
+
+/*****************************************************************************/
+int
+video_latency_frames_in_flight(int latency_ms, int frame_interval_ms,
+                               int min_frames, int max_frames)
+{
+    int frames = min_frames;
+
+    if (latency_ms > 0 && frame_interval_ms > 0)
+    {
+        /* round up, plus the frame being captured */
+        frames = (latency_ms + frame_interval_ms - 1) / frame_interval_ms + 1;
+    }
+    if (frames < min_frames)
+    {
+        frames = min_frames;
+    }
+    if (frames > max_frames)
+    {
+        frames = max_frames;
+    }
+    return frames;
+}

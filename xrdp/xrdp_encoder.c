@@ -342,6 +342,7 @@ xrdp_encoder_create(struct xrdp_mm *mm)
                     fif <= MAX_XRDP_GFX_FRAMES_IN_FLIGHT)
             {
                 self->frames_in_flight = fif;
+                self->frames_in_flight_fixed = 1;
                 LOG(LOG_LEVEL_INFO, "xrdp_encoder_create: "
                     "XRDP_GFX_FRAMES_IN_FLIGHT set to %d", fif);
             }

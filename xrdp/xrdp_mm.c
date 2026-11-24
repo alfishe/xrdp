@@ -1491,6 +1491,47 @@ xrdp_mm_egfx_caps_advertise(void *user, int caps_count,
 }
 
 /*****************************************************************************/
+/* Most frames allowed in flight when sized from the measured latency */
+#define XRDP_MM_MAX_FRAMES_IN_FLIGHT 16
+
+/*****************************************************************************/
+/* Frames that may be unacknowledged. The configured number is the lower
+ * bound; enough frames to cover the measured round trip at the codec's
+ * frame interval are allowed, so the frame rate does not drop to frames in
+ * flight divided by the round trip. */
+static int
+xrdp_mm_frames_in_flight(struct xrdp_mm *self)
+{
+    struct xrdp_encoder *encoder = self->encoder;
+    int interval;
+    int latency;
+    int fif;
+
+    if (!encoder->gfx || encoder->frames_in_flight_fixed)
+    {
+        return encoder->frames_in_flight;
+    }
+    /* the module captures at most every frame interval, see xrdp.ini;
+     * the shorter one covers whichever codec is in use */
+    interval = MIN(xrdp_mm_get_value_int(self, "h264_frame_interval",
+                                         DEFAULT_H264_FRAME_INTERVAL),
+                   xrdp_mm_get_value_int(self, "rfx_frame_interval",
+                                         DEFAULT_RFX_FRAME_INTERVAL));
+    latency = video_latency_min_ms(&encoder->video_latency);
+    fif = video_latency_frames_in_flight(latency, interval,
+                                         encoder->frames_in_flight,
+                                         XRDP_MM_MAX_FRAMES_IN_FLIGHT);
+    if (fif != encoder->frames_in_flight_now)
+    {
+        LOG(LOG_LEVEL_INFO, "xrdp_mm_frames_in_flight: %d frames in flight "
+            "for %d ms round trip at %d ms frame interval",
+            fif, latency, interval);
+        encoder->frames_in_flight_now = fif;
+    }
+    return fif;
+}
+
+/*****************************************************************************/
 static int
 xrdp_mm_update_module_frame_ack(struct xrdp_mm *self)
 {
@@ -1508,7 +1549,7 @@ xrdp_mm_update_module_frame_ack(struct xrdp_mm *self)
     }
     else
     {
-        int fif = encoder->frames_in_flight;
+        int fif = xrdp_mm_frames_in_flight(self);
         if (encoder->frame_id_client + fif > encoder->frame_id_server)
         {
             if (encoder->frame_id_server > encoder->frame_id_server_sent)
