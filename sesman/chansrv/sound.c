@@ -28,6 +28,7 @@
 #include <sys/un.h>
 
 #include "sound.h"
+#include "sound_latency.h"
 #include "thread_calls.h"
 #include "defines.h"
 #include "fifo.h"
@@ -76,8 +77,7 @@ static int    g_cBlockNo = 0;
 static int    g_bytes_in_stream = 0;
 struct fifo  *g_in_fifo;
 int    g_bytes_in_fifo = 0;
-static int    g_time_diff = 0;
-static int    g_best_time_diff = 0;
+static struct sound_latency g_latency;
 
 
 static struct stream *g_stream_inp = NULL;
@@ -90,7 +90,6 @@ static int g_sent_time[256];
 
 static int g_bbuf_size = 1024 * 8; /* may change later */
 
-static struct list *g_ack_time_diff = 0;
 
 struct xr_wave_format_ex
 {
@@ -958,14 +957,17 @@ sound_send_wave_data(char *data, int data_bytes)
     int res;
 
     LOG_DEVEL(LOG_LEVEL_DEBUG, "sound_send_wave_data: sending %d bytes", data_bytes);
-    if (g_time_diff > g_best_time_diff + 250)
+    /* source PCM is always g_pcm_44100 */
+    data_index = sound_latency_drop_bytes(&g_latency, data_bytes,
+                                          g_pcm_44100.nAvgBytesPerSec,
+                                          g_pcm_44100.nBlockAlign);
+    if (data_index > 0)
     {
-        data_bytes = data_bytes / 4;
-        data_bytes = data_bytes & ~3;
-        g_memset(data, 0, data_bytes);
-        g_time_diff = 0;
+        LOG(LOG_LEVEL_INFO, "sound_send_wave_data: client playback latency "
+            "%d ms (best %d ms), dropped %d bytes to catch up",
+            g_latency.last_avg_ms, g_latency.best_ms, data_index);
     }
-    data_index = 0;
+    data_bytes -= data_index;
     error = 0;
     while (data_bytes > 0)
     {
@@ -1014,7 +1016,7 @@ sound_send_close(void)
 
     LOG_DEVEL(LOG_LEVEL_DEBUG, "sound_send_close:");
 
-    g_best_time_diff = 0;
+    sound_latency_reset(&g_latency);
     g_buf_index = 0;
 
     /* send close msg */
@@ -1054,8 +1056,6 @@ sound_process_wave_confirm(struct stream *s, int size)
     int cConfirmedBlockNo;
     int time;
     int time_diff;
-    int index;
-    int acc;
 
     time = g_time3();
     in_uint16_le(s, wTimeStamp);
@@ -1066,25 +1066,7 @@ sound_process_wave_confirm(struct stream *s, int size)
         "cConfirmedBlockNo %d time diff %d",
         wTimeStamp, cConfirmedBlockNo, time_diff);
 
-    acc = 0;
-    list_add_item(g_ack_time_diff, time_diff);
-    if (g_ack_time_diff->count >= 50)
-    {
-        while (g_ack_time_diff->count > 50)
-        {
-            list_remove_item(g_ack_time_diff, 0);
-        }
-        for (index = 0; index < g_ack_time_diff->count; index++)
-        {
-            acc += list_get_item(g_ack_time_diff, index);
-        }
-        acc = acc / g_ack_time_diff->count;
-        if ((g_best_time_diff < 1) || (g_best_time_diff > acc))
-        {
-            g_best_time_diff = acc;
-        }
-    }
-    g_time_diff = acc;
+    sound_latency_confirm(&g_latency, time_diff);
     return 0;
 }
 
@@ -1127,7 +1109,6 @@ process_pcm_message(int id, int size, struct stream *s)
                         sound_send_wave_data_chunk(buf, g_bbuf_size);
                     }
                     free(buf);
-                    g_time_diff = 0;
                 }
             }
             return sound_send_close();
@@ -1297,11 +1278,7 @@ sound_init(void)
     g_client_does_mp3lame = 0;
     g_client_mp3lame_index = 0;
 
-    if (g_ack_time_diff == 0)
-    {
-        g_ack_time_diff = list_create();
-    }
-    list_clear(g_ack_time_diff);
+    sound_latency_reset(&g_latency);
 
 #if defined(XRDP_FDK_AAC) || defined(XRDP_MP3LAME)
     LOG(LOG_LEVEL_INFO, "num_silent_frames_aac: %d", g_cfg->num_silent_frames_aac);

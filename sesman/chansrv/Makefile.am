@@ -69,6 +69,8 @@ xrdp_chansrv_SOURCES = \
   smartcard.h \
   sound.c \
   sound.h \
+  sound_latency.c \
+  sound_latency.h \
   xcommon.c \
   xcommon.h \
   audin.c \
