@@ -79,6 +79,22 @@ struct fifo  *g_in_fifo;
 int    g_bytes_in_fifo = 0;
 static struct sound_latency g_latency;
 
+/* Playback latency reported to the sound server (pipewire-module-xrdp),
+ * so players can delay video to match. chansrv announces the feature
+ * with one latency message when the sink connects; an older module never
+ * reads it. A module that understands it answers with SINK_MSG_LATENCY
+ * and only then are updates sent. */
+#define SINK_MSG_DATA 0
+#define SINK_MSG_CLOSE 1
+#define SINK_MSG_LATENCY 2
+#define SINK_LATENCY_MIN_CHANGE_MS 10
+#define SINK_LATENCY_MIN_INTERVAL_MS 500
+static int g_sink_latency_feedback = 0;
+static int g_sink_latency_sent_ms = -1;
+static int g_sink_latency_sent_time = 0;
+/* time from a frame being captured to the client showing it, from xrdp */
+static int g_video_latency_ms = 0;
+
 
 static struct stream *g_stream_inp = NULL;
 static struct stream *g_stream_incoming_packet = NULL;
@@ -1048,6 +1064,48 @@ sound_process_training(struct stream *s, int size)
 }
 
 /*****************************************************************************/
+/* tell the sound server how long a sample takes from it to the speaker */
+static int
+sound_send_sink_latency(int latency_ms)
+{
+    struct stream *s;
+    int rv;
+
+    if (g_audio_c_trans_out == 0)
+    {
+        return 1;
+    }
+    s = trans_get_out_s(g_audio_c_trans_out, 12);
+    out_uint32_le(s, SINK_MSG_LATENCY);
+    out_uint32_le(s, 12);
+    out_uint32_le(s, latency_ms * 1000); /* microseconds */
+    s_mark_end(s);
+    rv = trans_force_write(g_audio_c_trans_out);
+    g_sink_latency_sent_ms = latency_ms;
+    g_sink_latency_sent_time = g_time3();
+    return rv;
+}
+
+/*****************************************************************************/
+void
+sound_set_video_latency(int latency_ms)
+{
+    g_video_latency_ms = latency_ms < 0 ? 0 : latency_ms;
+}
+
+/*****************************************************************************/
+/* latency to report to the sound server, see sound_latency_sink_ms() */
+static int
+sound_sink_latency_ms(void)
+{
+    /* on average half a block waits here to be filled */
+    return sound_latency_sink_ms(sound_latency_current_ms(&g_latency),
+                                 g_bbuf_size * 1000 /
+                                 g_pcm_44100.nAvgBytesPerSec / 2,
+                                 g_video_latency_ms);
+}
+
+/*****************************************************************************/
 /* from client */
 static int
 sound_process_wave_confirm(struct stream *s, int size)
@@ -1067,6 +1125,21 @@ sound_process_wave_confirm(struct stream *s, int size)
         wTimeStamp, cConfirmedBlockNo, time_diff);
 
     sound_latency_confirm(&g_latency, time_diff);
+    if (g_sink_latency_feedback)
+    {
+        int ms = sound_sink_latency_ms();
+        int change = ms - g_sink_latency_sent_ms;
+
+        if (ms > 0 &&
+                (g_sink_latency_sent_ms < 0 ||
+                 ((change >= SINK_LATENCY_MIN_CHANGE_MS ||
+                   change <= -SINK_LATENCY_MIN_CHANGE_MS) &&
+                  time - g_sink_latency_sent_time >=
+                  SINK_LATENCY_MIN_INTERVAL_MS)))
+        {
+            sound_send_sink_latency(ms);
+        }
+    }
     return 0;
 }
 
@@ -1092,6 +1165,13 @@ process_pcm_message(int id, int size, struct stream *s)
             }
             return sound_send_wave_data(s->p, size);
             break;
+        case SINK_MSG_LATENCY:
+            /* the sound server understands latency reports */
+            LOG(LOG_LEVEL_INFO, "process_pcm_message: sound server accepts "
+                "playback latency reports");
+            g_sink_latency_feedback = 1;
+            g_sink_latency_sent_ms = -1;
+            return 0;
         case 1:
             if ((g_client_does_fdk_aac || g_client_does_mp3lame) && sending_silence == 0)
             {
@@ -1199,6 +1279,10 @@ sound_sndsrvr_sink_conn_in(struct trans *trans, struct trans *new_trans)
     g_audio_c_trans_out->header_size = 8;
     trans_delete(g_audio_l_trans_out);
     g_audio_l_trans_out = 0;
+
+    /* announce latency reports, see SINK_MSG_LATENCY */
+    g_sink_latency_feedback = 0;
+    sound_send_sink_latency(sound_sink_latency_ms());
 
     return 0;
 }

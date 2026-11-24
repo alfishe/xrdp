@@ -90,6 +90,26 @@ sound_latency_confirm(struct sound_latency *sl, int latency_ms)
 
 /*****************************************************************************/
 int
+sound_latency_current_ms(const struct sound_latency *sl)
+{
+    int index;
+    int sum = 0;
+
+    if (sl->count == 0)
+    {
+        /* window just restarted, the last full one is the best guess */
+        return sl->last_avg_ms;
+    }
+    /* after a restart the fresh samples are at 0 .. count - 1 */
+    for (index = 0; index < sl->count; index++)
+    {
+        sum += sl->window[index];
+    }
+    return sum / sl->count;
+}
+
+/*****************************************************************************/
+int
 sound_latency_drop_bytes(struct sound_latency *sl, int data_bytes,
                          int bytes_per_sec, int block_align)
 {
@@ -116,4 +136,27 @@ sound_latency_drop_bytes(struct sound_latency *sl, int data_bytes,
         sl->drop_ms = (dropped_ms >= sl->drop_ms) ? 0 : sl->drop_ms - dropped_ms;
     }
     return drop;
+}
+
+/*****************************************************************************/
+int
+sound_latency_sink_ms(int client_ms, int buffer_ms, int video_ms)
+{
+    int audio_ms;
+
+    if (client_ms <= 0)
+    {
+        return 0;
+    }
+    audio_ms = client_ms + (buffer_ms > 0 ? buffer_ms : 0);
+    if (video_ms < 0)
+    {
+        video_ms = 0;
+    }
+    if (audio_ms <= video_ms)
+    {
+        /* video is slower than audio, players cannot fix that */
+        return 1;
+    }
+    return audio_ms - video_ms;
 }

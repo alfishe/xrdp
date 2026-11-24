@@ -183,6 +183,66 @@ START_TEST(test_reset_forgets_best)
 }
 END_TEST
 
+START_TEST(test_current_latency)
+{
+    struct sound_latency sl;
+    int i;
+
+    sound_latency_reset(&sl);
+    ck_assert_int_eq(sound_latency_current_ms(&sl), 0);
+    /* partial window: average of what was measured so far */
+    sound_latency_confirm(&sl, 100);
+    sound_latency_confirm(&sl, 200);
+    ck_assert_int_eq(sound_latency_current_ms(&sl), 150);
+    /* full window rolls over the oldest samples */
+    for (i = 0; i < SOUND_LATENCY_WINDOW; i++)
+    {
+        sound_latency_confirm(&sl, 120);
+    }
+    ck_assert_int_eq(sound_latency_current_ms(&sl), 120);
+}
+END_TEST
+
+START_TEST(test_current_latency_follows_client_buffering)
+{
+    struct sound_latency sl;
+    int i;
+
+    /* idle, then video makes the client buffer about 300 ms: the reported
+     * latency must end up there, also across the catch up restart */
+    sound_latency_reset(&sl);
+    for (i = 0; i < 100; i++)
+    {
+        sound_latency_confirm(&sl, 90);
+    }
+    ck_assert_int_eq(sound_latency_current_ms(&sl), 90);
+    for (i = 0; i < 200; i++)
+    {
+        sound_latency_confirm(&sl, 400);
+        sound_latency_drop_bytes(&sl, CHUNK, BPS, ALIGN);
+        ck_assert_int_ge(sound_latency_current_ms(&sl), 90);
+        ck_assert_int_le(sound_latency_current_ms(&sl), 400);
+    }
+    ck_assert_int_eq(sound_latency_current_ms(&sl), 400);
+}
+END_TEST
+
+START_TEST(test_sink_latency_subtracts_video)
+{
+    /* nothing measured yet */
+    ck_assert_int_eq(sound_latency_sink_ms(0, 23, 40), 0);
+    /* audio only */
+    ck_assert_int_eq(sound_latency_sink_ms(300, 23, 0), 323);
+    /* players delay video by the difference */
+    ck_assert_int_eq(sound_latency_sink_ms(300, 23, 60), 263);
+    /* video slower than audio: smallest latency */
+    ck_assert_int_eq(sound_latency_sink_ms(50, 0, 80), 1);
+    ck_assert_int_eq(sound_latency_sink_ms(80, 0, 80), 1);
+    /* bad inputs */
+    ck_assert_int_eq(sound_latency_sink_ms(300, -5, -7), 300);
+}
+END_TEST
+
 START_TEST(test_bad_arguments)
 {
     struct sound_latency sl;
@@ -210,6 +270,9 @@ make_suite_test_sound_latency(void)
     tcase_add_test(tc, test_drop_spans_chunks);
     tcase_add_test(tc, test_small_rise_below_threshold_ignored);
     tcase_add_test(tc, test_reset_forgets_best);
+    tcase_add_test(tc, test_current_latency);
+    tcase_add_test(tc, test_current_latency_follows_client_buffering);
+    tcase_add_test(tc, test_sink_latency_subtracts_video);
     tcase_add_test(tc, test_bad_arguments);
     suite_add_tcase(s, tc);
     return s;

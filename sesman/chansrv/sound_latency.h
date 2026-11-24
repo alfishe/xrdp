@@ -64,6 +64,32 @@ void
 sound_latency_confirm(struct sound_latency *sl, int latency_ms);
 
 /**
+ * Current client playback latency
+ * @param sl latency state
+ * @return average over the confirmations measured so far in the current
+ *         window, else the last full window average, 0 if none yet
+ */
+int
+sound_latency_current_ms(const struct sound_latency *sl);
+
+/**
+ * Playback latency to report to the sound server
+ *
+ * A player shows a frame when it believes the matching audio is heard,
+ * i.e. the reported latency after writing it. The audio is heard after
+ * the audio latency, the frame is seen after the reported latency plus the
+ * video latency. They meet when the report is the audio latency minus the
+ * video latency.
+ *
+ * @param client_ms client playback latency, sound_latency_current_ms()
+ * @param buffer_ms time audio waits in chansrv before it is sent
+ * @param video_ms time from a frame being captured to the client showing it
+ * @return latency in ms, 0 if unknown, at least 1 otherwise
+ */
+int
+sound_latency_sink_ms(int client_ms, int buffer_ms, int video_ms);
+
+/**
  * Bytes to drop from the start of the next PCM data
  *
  * Call for every PCM chunk before it is buffered. The caller skips the

@@ -52,6 +52,8 @@
 
 int sound_init(void);
 int sound_deinit(void);
+/* video latency measured by xrdp, for audio/video sync */
+void sound_set_video_latency(int latency_ms);
 int sound_get_wait_objs(tbus *objs, int *count, int *timeout);
 int sound_check_wait_objs(void);
 

@@ -5,6 +5,7 @@
 #include "arch.h"
 #include "fifo.h"
 #include "xrdp_client_info.h"
+#include "xrdp_video_latency.h"
 
 #define ENC_IS_BIT_SET(_flags, _bit) (((_flags) & (1 << (_bit))) != 0)
 #define ENC_SET_BIT(_flags, _bit) do { _flags |= (1 << (_bit)); } while (0)
@@ -51,6 +52,9 @@ struct xrdp_encoder
     int frames_in_flight;
     int gfx;
     int gfx_ack_off;
+    struct video_latency video_latency;
+    int video_latency_sent_ms; /* last value reported to chansrv */
+    int video_latency_sent_time;
     const char *quants;
     int num_quants;
     int quant_idx_y;
@@ -121,7 +125,7 @@ struct xrdp_enc_data
     int pad0;
     void *shmem_ptr;
     int shmem_bytes;
-    int pad1;
+    int queued_ms; /* g_time3() when handed to the encoder */
     union _u
     {
         struct xrdp_enc_surface_command sc;

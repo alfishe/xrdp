@@ -1527,6 +1527,63 @@ xrdp_mm_update_module_frame_ack(struct xrdp_mm *self)
     return 0;
 }
 
+/* Video latency changes reported to chansrv for audio/video sync */
+#define VIDEO_LATENCY_MIN_CHANGE_MS 5
+#define VIDEO_LATENCY_MIN_INTERVAL_MS 500
+#define CHANSRV_MSG_VIDEO_LATENCY 21
+
+/*****************************************************************************/
+/* measure an acknowledged frame, tell chansrv if the latency moved */
+static void
+xrdp_mm_video_latency_ack(struct xrdp_mm *self, int frame_id)
+{
+    struct xrdp_encoder *encoder = self->encoder;
+    struct stream *s;
+    int now;
+    int ms;
+    int change;
+
+    now = g_time3();
+    if (!video_latency_frame_acked(&encoder->video_latency, frame_id, now))
+    {
+        return;
+    }
+    ms = video_latency_ms(&encoder->video_latency);
+    change = ms - encoder->video_latency_sent_ms;
+    if (change > -VIDEO_LATENCY_MIN_CHANGE_MS &&
+            change < VIDEO_LATENCY_MIN_CHANGE_MS)
+    {
+        return;
+    }
+    if (now - encoder->video_latency_sent_time < VIDEO_LATENCY_MIN_INTERVAL_MS)
+    {
+        return;
+    }
+    if (self->chan_trans == NULL ||
+            self->chan_trans->status != TRANS_STATUS_UP)
+    {
+        return;
+    }
+    s = trans_get_out_s(self->chan_trans, 20);
+    if (s == NULL)
+    {
+        return;
+    }
+    out_uint32_le(s, 0); /* version */
+    out_uint32_le(s, 20); /* pdu size */
+    out_uint32_le(s, CHANSRV_MSG_VIDEO_LATENCY);
+    out_uint32_le(s, 12);
+    out_uint32_le(s, ms);
+    s_mark_end(s);
+    if (trans_force_write(self->chan_trans) == 0)
+    {
+        LOG_DEVEL(LOG_LEVEL_DEBUG, "xrdp_mm_video_latency_ack: %d ms", ms);
+        encoder->video_latency_sent_ms = ms;
+        encoder->video_latency_sent_time = now;
+    }
+}
+
+/*****************************************************************************/
 static int
 xrdp_mm_egfx_frame_ack(void *user, uint32_t queue_depth, int frame_id,
                        int frames_decoded)
@@ -1567,6 +1624,7 @@ xrdp_mm_egfx_frame_ack(void *user, uint32_t queue_depth, int frame_id,
     LOG_DEVEL(LOG_LEVEL_TRACE, "xrdp_mm_egfx_frame_ack: "
               "incoming %d, client %d, server %d",
               frame_id, encoder->frame_id_client, encoder->frame_id_server);
+    xrdp_mm_video_latency_ack(self, frame_id);
     if (frame_id < 0 || frame_id > encoder->frame_id_server)
     {
         /* if frame_id is negative or bigger then what server last sent
@@ -3804,6 +3862,9 @@ xrdp_mm_process_enc_done(struct xrdp_mm *self)
                 if (client_ack)
                 {
                     self->encoder->frame_id_server = enc_done->frame_id;
+                    video_latency_frame_sent(&self->encoder->video_latency,
+                                             enc_done->frame_id,
+                                             enc->queued_ms);
                     xrdp_mm_update_module_frame_ack(self);
                 }
                 else if (self->mod != NULL)
@@ -4066,6 +4127,7 @@ xrdp_mm_frame_ack(struct xrdp_mm *self, int frame_id)
         LOG_DEVEL(LOG_LEVEL_DEBUG, "xrdp_mm_frame_ack: "
                   "incoming %d, client %d, server %d", frame_id,
                   encoder->frame_id_client, encoder->frame_id_server);
+        xrdp_mm_video_latency_ack(self, frame_id);
         if ((frame_id < 0) || (frame_id > encoder->frame_id_server))
         {
             /* if frame_id is negative or bigger then what server last sent
@@ -4391,6 +4453,7 @@ server_paint_rects_ex(struct xrdp_mod *mod,
         }
 
         /* insert into fifo for encoder thread to process */
+        enc_data->queued_ms = g_time3();
         tc_mutex_lock(mm->encoder->mutex);
         fifo_add_item(mm->encoder->fifo_to_proc, (void *) enc_data);
         tc_mutex_unlock(mm->encoder->mutex);
@@ -4491,6 +4554,7 @@ server_egfx_cmd(struct xrdp_mod *mod,
     enc->shmem_ptr = data;
     enc->shmem_bytes = data_bytes;
     /* insert into fifo for encoder thread to process */
+    enc->queued_ms = g_time3();
     tc_mutex_lock(mm->encoder->mutex);
     fifo_add_item(mm->encoder->fifo_to_proc, enc);
     tc_mutex_unlock(mm->encoder->mutex);

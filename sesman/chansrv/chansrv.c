@@ -928,6 +928,14 @@ process_message(void)
             case 19: /* drdynvc data */
                 rv = process_message_drdynvc_data(s);
                 break;
+            case 21: /* video latency, ms */
+                if (s_check_rem(s, 4))
+                {
+                    int latency_ms;
+                    in_uint32_le(s, latency_ms);
+                    sound_set_video_latency(latency_ms);
+                }
+                break;
             default:
                 LOG_DEVEL(LOG_LEVEL_ERROR, "process_message: unknown msg %d", id);
                 break;

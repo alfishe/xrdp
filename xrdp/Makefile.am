@@ -74,6 +74,8 @@ xrdp_SOURCES = \
   xrdp_bitmap_common.c \
   xrdp_cache.c \
   xrdp_encoder.c \
+  xrdp_video_latency.c \
+  xrdp_video_latency.h \
   xrdp_encoder.h \
   xrdp_font.c \
   xrdp_listen.c \

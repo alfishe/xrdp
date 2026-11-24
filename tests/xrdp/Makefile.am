@@ -43,6 +43,7 @@ test_xrdp_SOURCES = \
     test_xrdp_main.c \
     test_xrdp_egfx.c \
     test_xrdp_region.c \
+    test_video_latency.c \
     test_tconfig.c \
     test_bitmap_load.c
 
@@ -66,6 +67,7 @@ test_xrdp_LDADD = \
     $(top_builddir)/third_party/tomlc99/libtoml.la \
     $(top_builddir)/xrdp/lang.o \
     $(top_builddir)/xrdp/xrdp_mm.o \
+    $(top_builddir)/xrdp/xrdp_video_latency.o \
     $(top_builddir)/xrdp/xrdp_wm.o \
     $(top_builddir)/xrdp/xrdp_font.o \
     $(top_builddir)/xrdp/xrdp_egfx.o \
