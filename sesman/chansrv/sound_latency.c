@@ -139,6 +139,62 @@ sound_latency_drop_bytes(struct sound_latency *sl, int data_bytes,
 }
 
 /*****************************************************************************/
+void
+sound_latency_report_reset(struct sound_latency_report *r)
+{
+    memset(r, 0, sizeof(*r));
+    r->sent_ms = -1;
+}
+
+/*****************************************************************************/
+static int
+differs(int a, int b)
+{
+    int change = a - b;
+
+    return change >= SOUND_LATENCY_REPORT_MIN_CHANGE_MS ||
+           change <= -SOUND_LATENCY_REPORT_MIN_CHANGE_MS;
+}
+
+/*****************************************************************************/
+int
+sound_latency_report_next(struct sound_latency_report *r, int latency_ms,
+                          int now_ms)
+{
+    if (latency_ms <= 0)
+    {
+        return 0;
+    }
+    if (r->sent_ms < 0)
+    {
+        /* nothing reported yet, any figure beats none */
+        r->sent_ms = latency_ms;
+        r->have_candidate = 0;
+        return latency_ms;
+    }
+    if (!differs(latency_ms, r->sent_ms))
+    {
+        /* back to what was reported, a spike ended */
+        r->have_candidate = 0;
+        return 0;
+    }
+    if (!r->have_candidate || differs(latency_ms, r->candidate_ms))
+    {
+        r->candidate_ms = latency_ms;
+        r->candidate_since = now_ms;
+        r->have_candidate = 1;
+        return 0;
+    }
+    if (now_ms - r->candidate_since < SOUND_LATENCY_REPORT_HOLD_MS)
+    {
+        return 0;
+    }
+    r->sent_ms = latency_ms;
+    r->have_candidate = 0;
+    return latency_ms;
+}
+
+/*****************************************************************************/
 int
 sound_latency_sink_ms(int client_ms, int buffer_ms, int video_ms)
 {

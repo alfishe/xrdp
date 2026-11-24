@@ -243,6 +243,95 @@ START_TEST(test_sink_latency_subtracts_video)
 }
 END_TEST
 
+START_TEST(test_report_first_latency_at_once)
+{
+    struct sound_latency_report r;
+
+    sound_latency_report_reset(&r);
+    /* nothing measured yet: nothing to report */
+    ck_assert_int_eq(sound_latency_report_next(&r, 0, 0), 0);
+    ck_assert_int_eq(sound_latency_report_next(&r, 74, 10), 74);
+    /* unchanged */
+    ck_assert_int_eq(sound_latency_report_next(&r, 74, 5000), 0);
+    /* jitter below the threshold */
+    ck_assert_int_eq(sound_latency_report_next(&r, 80, 6000), 0);
+    ck_assert_int_eq(sound_latency_report_next(&r, 80, 9000), 0);
+}
+END_TEST
+
+START_TEST(test_report_ignores_short_spike)
+{
+    struct sound_latency_report r;
+    int t;
+
+    /* As seen with Windows App: every ~33 s the video latency doubled for
+     * half a second, which swung the report 74 -> 7 -> 74 ms and made the
+     * player skip twice */
+    sound_latency_report_reset(&r);
+    ck_assert_int_eq(sound_latency_report_next(&r, 74, 0), 74);
+    for (t = 1000; t < 1500; t += 46)
+    {
+        ck_assert_int_eq(sound_latency_report_next(&r, 7, t), 0);
+    }
+    for (t = 1500; t < 10000; t += 46)
+    {
+        ck_assert_int_eq(sound_latency_report_next(&r, 73, t), 0);
+    }
+    /* a spike shorter than the hold time, even right before it ends */
+    for (t = 10000; t < 10000 + SOUND_LATENCY_REPORT_HOLD_MS - 46; t += 46)
+    {
+        ck_assert_int_eq(sound_latency_report_next(&r, 200, t), 0);
+    }
+    ck_assert_int_eq(sound_latency_report_next(&r, 74, t), 0);
+}
+END_TEST
+
+START_TEST(test_report_lasting_change)
+{
+    struct sound_latency_report r;
+    int t;
+    int reported = 0;
+    int reported_at = 0;
+
+    sound_latency_report_reset(&r);
+    ck_assert_int_eq(sound_latency_report_next(&r, 74, 0), 74);
+    /* a lasting rise that wobbles a little is reported once, after the
+     * hold time */
+    for (t = 1000; t < 6000; t += 46)
+    {
+        int ms = sound_latency_report_next(&r, 300 + (t / 46) % 5, t);
+
+        if (ms > 0)
+        {
+            ck_assert_int_eq(reported, 0);
+            reported = ms;
+            reported_at = t;
+        }
+    }
+    ck_assert_int_ge(reported, 300);
+    ck_assert_int_le(reported, 304);
+    ck_assert_int_ge(reported_at, 1000 + SOUND_LATENCY_REPORT_HOLD_MS);
+    ck_assert_int_lt(reported_at, 1000 + SOUND_LATENCY_REPORT_HOLD_MS + 46);
+}
+END_TEST
+
+START_TEST(test_report_restarts_hold_on_new_value)
+{
+    struct sound_latency_report r;
+
+    sound_latency_report_reset(&r);
+    ck_assert_int_eq(sound_latency_report_next(&r, 74, 0), 74);
+    ck_assert_int_eq(sound_latency_report_next(&r, 150, 1000), 0);
+    /* the candidate moves on before it held: the hold starts over */
+    ck_assert_int_eq(sound_latency_report_next(&r, 250, 2500), 0);
+    ck_assert_int_eq(sound_latency_report_next(&r, 250, 3100), 0);
+    ck_assert_int_eq(sound_latency_report_next(&r, 250, 4500), 250);
+    /* after a reset the next figure goes out at once */
+    sound_latency_report_reset(&r);
+    ck_assert_int_eq(sound_latency_report_next(&r, 90, 4600), 90);
+}
+END_TEST
+
 START_TEST(test_bad_arguments)
 {
     struct sound_latency sl;
@@ -273,6 +362,10 @@ make_suite_test_sound_latency(void)
     tcase_add_test(tc, test_current_latency);
     tcase_add_test(tc, test_current_latency_follows_client_buffering);
     tcase_add_test(tc, test_sink_latency_subtracts_video);
+    tcase_add_test(tc, test_report_first_latency_at_once);
+    tcase_add_test(tc, test_report_ignores_short_spike);
+    tcase_add_test(tc, test_report_lasting_change);
+    tcase_add_test(tc, test_report_restarts_hold_on_new_value);
     tcase_add_test(tc, test_bad_arguments);
     suite_add_tcase(s, tc);
     return s;

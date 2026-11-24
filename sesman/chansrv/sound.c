@@ -87,11 +87,8 @@ static struct sound_latency g_latency;
 #define SINK_MSG_DATA 0
 #define SINK_MSG_CLOSE 1
 #define SINK_MSG_LATENCY 2
-#define SINK_LATENCY_MIN_CHANGE_MS 10
-#define SINK_LATENCY_MIN_INTERVAL_MS 500
 static int g_sink_latency_feedback = 0;
-static int g_sink_latency_sent_ms = -1;
-static int g_sink_latency_sent_time = 0;
+static struct sound_latency_report g_sink_latency_report;
 /* time from a frame being captured to the client showing it, from xrdp */
 static int g_video_latency_ms = 0;
 
@@ -1081,8 +1078,6 @@ sound_send_sink_latency(int latency_ms)
     out_uint32_le(s, latency_ms * 1000); /* microseconds */
     s_mark_end(s);
     rv = trans_force_write(g_audio_c_trans_out);
-    g_sink_latency_sent_ms = latency_ms;
-    g_sink_latency_sent_time = g_time3();
     return rv;
 }
 
@@ -1127,15 +1122,10 @@ sound_process_wave_confirm(struct stream *s, int size)
     sound_latency_confirm(&g_latency, time_diff);
     if (g_sink_latency_feedback)
     {
-        int ms = sound_sink_latency_ms();
-        int change = ms - g_sink_latency_sent_ms;
+        int ms = sound_latency_report_next(&g_sink_latency_report,
+                                           sound_sink_latency_ms(), time);
 
-        if (ms > 0 &&
-                (g_sink_latency_sent_ms < 0 ||
-                 ((change >= SINK_LATENCY_MIN_CHANGE_MS ||
-                   change <= -SINK_LATENCY_MIN_CHANGE_MS) &&
-                  time - g_sink_latency_sent_time >=
-                  SINK_LATENCY_MIN_INTERVAL_MS)))
+        if (ms > 0)
         {
             sound_send_sink_latency(ms);
         }
@@ -1170,7 +1160,7 @@ process_pcm_message(int id, int size, struct stream *s)
             LOG(LOG_LEVEL_INFO, "process_pcm_message: sound server accepts "
                 "playback latency reports");
             g_sink_latency_feedback = 1;
-            g_sink_latency_sent_ms = -1;
+            sound_latency_report_reset(&g_sink_latency_report);
             return 0;
         case 1:
             if ((g_client_does_fdk_aac || g_client_does_mp3lame) && sending_silence == 0)

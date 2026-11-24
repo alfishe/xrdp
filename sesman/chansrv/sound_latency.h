@@ -89,6 +89,44 @@ sound_latency_current_ms(const struct sound_latency *sl);
 int
 sound_latency_sink_ms(int client_ms, int buffer_ms, int video_ms);
 
+/** Smallest latency change worth reporting to the sound server, ms */
+#define SOUND_LATENCY_REPORT_MIN_CHANGE_MS 10
+/** How long a changed latency must hold before it is reported, ms */
+#define SOUND_LATENCY_REPORT_HOLD_MS 2000
+
+/**
+ * Latency reports to the sound server
+ *
+ * Players resynchronise whenever the reported latency changes, which can be
+ * heard as a skip. Short spikes in the measurement (a burst of slow frame
+ * acknowledgements, for instance) must therefore not be reported, only
+ * changes that last.
+ */
+struct sound_latency_report
+{
+    int sent_ms;            /* last reported, < 0 = nothing reported yet */
+    int candidate_ms;       /* changed latency waiting to be confirmed */
+    int candidate_since;    /* when the candidate was first seen */
+    int have_candidate;
+};
+
+/**
+ * Forget what was reported, the next latency is reported at once
+ */
+void
+sound_latency_report_reset(struct sound_latency_report *r);
+
+/**
+ * Decide whether to report a latency
+ * @param r report state
+ * @param latency_ms current latency, sound_latency_sink_ms()
+ * @param now_ms current time
+ * @return latency to report now, 0 if nothing is to be reported
+ */
+int
+sound_latency_report_next(struct sound_latency_report *r, int latency_ms,
+                          int now_ms);
+
 /**
  * Bytes to drop from the start of the next PCM data
  *
